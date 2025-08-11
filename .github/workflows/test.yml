@@ -1,0 +1,150 @@
+name: Test
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential libpcre3-dev libssl-dev zlib1g-dev libreadline-dev libncurses5-dev
+
+    - name: Set up Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+        components: rustfmt, clippy
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+
+    - name: Build Rust project
+      run: |
+        cargo build --release
+        ls -la target/release/
+
+    - name: Install OpenResty
+      run: |
+        # Download and install OpenResty
+        wget https://openresty.org/download/openresty-1.27.1.2.tar.gz
+        tar -xzf openresty-1.27.1.2.tar.gz
+        cd openresty-1.27.1.2
+        ./configure --prefix=/opt/openresty \
+                    --with-luajit \
+                    --with-http_ssl_module \
+                    --with-http_realip_module \
+                    --with-http_stub_status_module \
+                    --with-http_gzip_static_module \
+                    --with-pcre-jit \
+                    --with-file-aio \
+                    --with-http_secure_link_module
+        make -j$(nproc)
+        sudo make install
+        
+        # Add OpenResty to PATH
+        echo "/opt/openresty/bin" >> $GITHUB_PATH
+        echo "/opt/openresty/luajit/bin" >> $GITHUB_PATH
+        
+        # Verify installation
+        /opt/openresty/luajit/bin/luajit -v
+
+    - name: Install LuaRocks
+      run: |
+        # Download and install LuaRocks
+        wget https://luarocks.org/releases/luarocks-3.12.0.tar.gz
+        tar -xzf luarocks-3.12.0.tar.gz
+        cd luarocks-3.12.0
+        ./configure --prefix=/opt/luarocks \
+                    --with-lua=/opt/openresty/luajit \
+                    --lua-suffix=jit \
+                    --with-lua-include=/opt/openresty/luajit/include/luajit-2.1
+        make
+        sudo make install
+        
+        # Add LuaRocks to PATH
+        echo "/opt/luarocks/bin" >> $GITHUB_PATH
+        
+        # Verify installation
+        /opt/luarocks/bin/luarocks --version
+
+    - name: Install Busted
+      run: |
+        # Set up LuaRocks environment
+        export PATH="/opt/luarocks/bin:/opt/openresty/bin:/opt/openresty/luajit/bin:$PATH"
+        
+        # Install busted
+        /opt/luarocks/bin/luarocks install busted
+        
+        # Verify busted installation
+        /opt/luarocks/bin/busted --version || true
+        
+        # Also check if busted is available in the path
+        which busted || echo "busted not in PATH, will use full path"
+
+    - name: Set up environment variables
+      run: |
+        echo "LUA_PATH=/opt/luarocks/share/lua/5.1/?.lua;/opt/luarocks/share/lua/5.1/?/init.lua;./lua/?.lua;./lua/?/init.lua;;" >> $GITHUB_ENV
+        echo "LUA_CPATH=/opt/luarocks/lib/lua/5.1/?.so;;" >> $GITHUB_ENV
+        echo "PATH=/opt/luarocks/bin:/opt/openresty/bin:/opt/openresty/luajit/bin:$PATH" >> $GITHUB_ENV
+
+    - name: Verify setup
+      run: |
+        echo "=== Environment Check ==="
+        echo "PATH: $PATH"
+        echo "LUA_PATH: $LUA_PATH"
+        echo "LUA_CPATH: $LUA_CPATH"
+        
+        echo "=== LuaJIT Version ==="
+        /opt/openresty/luajit/bin/luajit -v
+        
+        echo "=== LuaRocks Version ==="
+        /opt/luarocks/bin/luarocks --version
+        
+        echo "=== Busted Check ==="
+        /opt/luarocks/bin/busted --version || echo "Busted version check failed"
+        
+        echo "=== Library Check ==="
+        ls -la target/release/liblol_html_ffi.so
+        
+        echo "=== Spec Files ==="
+        ls -la spec/
+
+    - name: Run tests
+      run: |
+        export PATH="/opt/luarocks/bin:/opt/openresty/bin:/opt/openresty/luajit/bin:$PATH"
+        export LUA_PATH="/opt/luarocks/share/lua/5.1/?.lua;/opt/luarocks/share/lua/5.1/?/init.lua;./lua/?.lua;./lua/?/init.lua;;"
+        export LUA_CPATH="/opt/luarocks/lib/lua/5.1/?.so;;"
+        
+        # Run tests with gtest output format
+        /opt/luarocks/bin/busted -o gtest spec/
+
+    - name: Run example
+      run: |
+        export PATH="/opt/luarocks/bin:/opt/openresty/bin:/opt/openresty/luajit/bin:$PATH"
+        export LUA_PATH="./lua/?.lua;./lua/?/init.lua;;"
+        
+        echo "=== Running Example ==="
+        /opt/openresty/luajit/bin/luajit example.lua
