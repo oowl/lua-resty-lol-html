@@ -1,0 +1,11 @@
+[package]
+name = "lua-resty-lol-html"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "lol_html_ffi"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+lol_html = "2.6.0"

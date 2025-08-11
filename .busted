@@ -1,0 +1,13 @@
+return {
+  default = {
+    verbose = true,
+    shuffle = true,
+    sort = true,
+    ROOT = {"."},
+    pattern = "spec"
+  },
+  unit = {
+    ROOT = {"spec"},
+    pattern = "_spec"
+  }
+}
